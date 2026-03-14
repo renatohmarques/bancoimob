@@ -164,10 +164,19 @@ export default function GameScreen({ players, startingPlayerIndex, initialGameSt
        speak(`${activeAction.title}. ${activeAction.message}`);
     } else if (activeAction.type === 'free_buy') {
        speak("Compra livre! Você pode escolher qualquer propriedade que ainda não tenha dono para comprar agora.");
+    } else if (activeAction.type === 'jail_options') {
+       speak("Você está na detenção. Deseja tentar a sorte nos dados para sair de graça ou pagar 50 reais de fiança?");
     }
   }, [activeAction]);
 
   const rollDice = () => {
+    const cp = gameState.players[gameState.currentPlayerIndex];
+    if (cp.inJail && !activeAction) {
+      setActiveAction({ type: 'jail_options' });
+      syncState({ active_action: { type: 'jail_options' } });
+      return;
+    }
+
     playSound('dice');
     const d1 = Math.floor(Math.random() * 6) + 1;
     const d2 = Math.floor(Math.random() * 6) + 1;
@@ -387,6 +396,39 @@ export default function GameScreen({ players, startingPlayerIndex, initialGameSt
        }
     } else if (action.type === 'go_to_jail') {
        playSound('bad'); currentPlayer.position = 9; currentPlayer.inJail = true;
+    } else if (action.type === 'jail_options') {
+        if (decision === 'pay') {
+            currentPlayer.money -= 50;
+            currentPlayer.inJail = false;
+            currentPlayer.jailTurns = 0;
+            playSound('money');
+            speak("Fiança paga! Agora jogue os dados para se mover.");
+            
+            const nextState = {...gameState, players: newPlayers};
+            setGameState(nextState);
+            setActiveAction(null);
+            setIsInitiator(false);
+            syncState({ game_state: nextState, active_action: null });
+            return; // Don't advance turn, let them roll
+        } else {
+            // Decision 'roll'
+            setActiveAction(null);
+            syncState({ active_action: null });
+            // Small delay before rolling to let modal close
+            setTimeout(() => {
+                // Modified rollDice logic to bypass jail check once
+                playSound('dice');
+                const d1 = Math.floor(Math.random() * 6) + 1;
+                const d2 = Math.floor(Math.random() * 6) + 1;
+                const _dv = [d1, d2];
+                setDiceValues(_dv);
+                setIsRolling(true);
+                setIsWaitingDice(false);
+                setIsInitiator(true);
+                syncState({ dice_values: _dv, is_rolling: true, active_action: null, game_state: gameState });
+            }, 500);
+            return;
+        }
     }
 
     const nextIdx = (gameState.currentPlayerIndex + 1) % newPlayers.length;
@@ -593,7 +635,21 @@ export default function GameScreen({ players, startingPlayerIndex, initialGameSt
                         <button className="cancel-btn magical-btn" onClick={() => executeAction()}>Pular</button>
                     </>
                  )}
-                 {activeAction.type === 'info' && (
+                  {activeAction.type === 'jail_options' && (
+                     <>
+                        <div style={{display: 'flex', justifyContent: 'center', marginBottom: '1rem'}}>
+                            <img src={currentPlayerObj.image} alt={currentPlayerObj.name} style={{width: '60px', height: '60px', borderRadius: '50%', border: `4px solid ${currentPlayerObj.color}`, objectFit: 'cover'}} />
+                        </div>
+                        <h3>Detenção! 🚓</h3>
+                        <p>Você está preso. O que deseja fazer?</p>
+                        <div className="modal-actions" style={{flexDirection: 'column', gap: '1rem'}}>
+                            <button className="primary-btn magical-btn" style={{width: '100%'}} onClick={() => executeAction('roll')}>Tentar Dados Iguais (Grátis)</button>
+                            <button className="magical-btn" style={{width: '100%', background: '#e67e22'}} onClick={() => executeAction('pay')}>Pagar R$ 50 e Sair Agora</button>
+                        </div>
+                        <p style={{marginTop: '1.5rem', fontSize: '0.9rem', opacity: 0.8}}>Tentativas: {currentPlayerObj.jailTurns}/3</p>
+                     </>
+                  )}
+                  {activeAction.type === 'info' && (
                    <>
                        <div style={{display: 'flex', justifyContent: 'center', marginBottom: '1rem'}}>
                            <img src={currentPlayerObj.image} alt={currentPlayerObj.name} style={{width: '50px', height: '50px', borderRadius: '50%', border: '2px solid var(--text-light)', objectFit: 'cover'}} />
