@@ -208,18 +208,29 @@ export default function GameScreen({ players, startingPlayerIndex, initialGameSt
     setTimeout(async () => {
         setIsRolling(false);
         setIsWaitingDice(false);
-        // Sync the end of rolling immediately to prevent other devices from re-rolling
-        syncState({ is_rolling: false, dice_values: diceValues, active_action: null });
-
+        
+        // Locked-in values for this movement
+        const moveDiceSum = diceValues[0] + diceValues[1];
         const cpIndex = gameState.currentPlayerIndex;
-        const cp = { ...gameState.players[cpIndex] };
+        // Get actual latest position from current state just before walk
+        let currentPos = gameState.players[cpIndex].position;
+
+        // Sync end of rolling
+        syncState({ is_rolling: false, dice_values: diceValues, active_action: null });
         
         // Jail mechanics BEFORE walking
-        if (cp.inJail) {
+        if (gameState.players[cpIndex].inJail) {
+          const cp = { ...gameState.players[cpIndex] };
           if (diceValues[0] === diceValues[1]) {
             speak("Dados iguais! Você saiu da detenção e agora vai se mover.");
             cp.inJail = false; 
             cp.jailTurns = 0;
+            // Update state with jail-free player before walking
+            const intermediatePlayers = [...gameState.players];
+            intermediatePlayers[cpIndex] = cp;
+            const intermediateState = { ...gameState, players: intermediatePlayers };
+            setGameState(intermediateState);
+            syncState({ game_state: intermediateState });
           } else {
             cp.jailTurns += 1;
             if (cp.jailTurns >= 3) {
@@ -227,6 +238,11 @@ export default function GameScreen({ players, startingPlayerIndex, initialGameSt
                cp.jailTurns = 0; 
                cp.money -= 50; 
                speak("Pagou 50 reais de fiança e saiu da detenção. Agora pode se mover.");
+               const intermediatePlayers = [...gameState.players];
+               intermediatePlayers[cpIndex] = cp;
+               const intermediateState = { ...gameState, players: intermediatePlayers };
+               setGameState(intermediateState);
+               syncState({ game_state: intermediateState });
             } else {
                speak("Você continua na detenção. Passe a vez.");
                const newPlayers = [...gameState.players];
@@ -241,36 +257,31 @@ export default function GameScreen({ players, startingPlayerIndex, initialGameSt
           }
         }
         
-        let currentStepsMove = 0;
-        const totalSteps = sum;
-        
-        // Função interna para mover um passo de cada vez
         const moveOneStep = (stepCount) => {
-          if (stepCount >= totalSteps) {
-            // Chegou ao destino, processar ação final
-            finishMovement(sum);
+          if (stepCount >= moveDiceSum) {
+            finishMovement(moveDiceSum);
             return;
           }
 
           setGameState(prev => {
             const nextPlayers = [...prev.players];
-            const cp = nextPlayers[prev.currentPlayerIndex];
-            const oldPos = cp.position;
+            const p = { ...nextPlayers[prev.currentPlayerIndex] };
+            const oldPos = p.position;
             const newPos = (oldPos + 1) % BOARD_SPACES.length;
             
-            cp.position = newPos;
+            p.position = newPos;
             
             // Narração do passo
             const count = stepCount + 1;
             speak(count.toString());
             
-            // Se passar pelo início
             if (newPos === 0) {
-              cp.money += 200;
+              p.money += 200;
               playSound('money');
               speak("Passou pelo Início, recebeu 200 reais!");
             }
 
+            nextPlayers[prev.currentPlayerIndex] = p;
             const newState = { ...prev, players: nextPlayers };
             syncState({ game_state: newState, is_rolling: false });
             return newState;
