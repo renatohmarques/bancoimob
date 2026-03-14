@@ -167,7 +167,9 @@ export default function GameScreen({ players, startingPlayerIndex, initialGameSt
     } else if (activeAction.type === 'free_buy') {
        speak("Compra livre! Você pode escolher qualquer propriedade que ainda não tenha dono para comprar agora.");
     } else if (activeAction.type === 'jail_options') {
-       speak("Você está na detenção. Deseja tentar a sorte nos dados para sair de graça ou pagar 50 reais de fiança?");
+       speak("Você está na detenção. Deseja tentar a sorte nos dados físicos para sair ou pagar a fiança?");
+    } else if (activeAction.type === 'input_dice') {
+       speak("Informe o valor dos seus dados físicos.");
     }
   }, [activeAction]);
 
@@ -179,15 +181,18 @@ export default function GameScreen({ players, startingPlayerIndex, initialGameSt
       return;
     }
 
-    playSound('dice');
-    const d1 = Math.floor(Math.random() * 6) + 1;
-    const d2 = Math.floor(Math.random() * 6) + 1;
+    // Instead of auto-rolling, ask for physical dice input
+    setActiveAction({ type: 'input_dice', d1: null, d2: null });
+    syncState({ active_action: { type: 'input_dice', d1: null, d2: null } });
+  };
+
+  const setPhysicalDice = (d1, d2) => {
     const _dv = [d1, d2];
     setDiceValues(_dv);
     setIsRolling(true);
     setIsWaitingDice(false);
-    setIsInitiator(true); // <--- Local flag to know this device started the roll
-    speak(`Sorteando dados...`, true);
+    setIsInitiator(true);
+    speak(`${d1} e ${d2}. Somando ${d1 + d2}.`, true);
     
     syncState({ dice_values: _dv, is_rolling: true, active_action: null, game_state: gameState });
   };
@@ -444,7 +449,10 @@ export default function GameScreen({ players, startingPlayerIndex, initialGameSt
             }, 500);
             return;
         }
-    }
+     } else if (action.type === 'input_dice') {
+         // This is handled by a direct call to setPhysicalDice normally, 
+         // but we keep this empty or for fallback.
+     }
 
     const nextIdx = (gameState.currentPlayerIndex + 1) % newPlayers.length;
     const nextState = {...gameState, players: newPlayers, currentPlayerIndex: nextIdx};
@@ -533,16 +541,16 @@ export default function GameScreen({ players, startingPlayerIndex, initialGameSt
              </p>
           </div>
 
-         {!diceValues && !activeAction && !transferModal && !playerDetailsModal && (
+          {!diceValues && !activeAction && !transferModal && !playerDetailsModal && (
              <motion.button 
                whileHover={{ scale: 1.1 }}
                whileTap={{ scale: 0.9 }}
                className="magical-btn huge-btn mt-6 primary-btn" 
                onClick={rollDice}
              >
-               Sortear Dados
+               Informar Dados Físicos
              </motion.button>
-         )}
+          )}
 
          {isRolling && <DiceRolling onFinish={handleDiceFinish} diceValues={diceValues} isWaiting={isWaitingDice} />}
       </div>
@@ -650,6 +658,58 @@ export default function GameScreen({ players, startingPlayerIndex, initialGameSt
                         <button className="cancel-btn magical-btn" onClick={() => executeAction()}>Pular</button>
                     </>
                  )}
+                  {activeAction.type === 'input_dice' && (
+                     <div style={{ textAlign: 'center' }}>
+                        <h3>Resultado dos Dados Físicos</h3>
+                        <p>Selecione os valores que caíram nos dados:</p>
+                        
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', margin: '2rem 0' }}>
+                            <div>
+                                <p style={{ fontWeight: 'bold', marginBottom: '10px' }}>Dado 1:</p>
+                                <div style={{ display: 'flex', justifyContent: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                                    {[1, 2, 3, 4, 5, 6].map(val => (
+                                        <button 
+                                            key={val} 
+                                            className={`magical-btn ${activeAction.d1 === val ? 'primary-btn' : ''}`}
+                                            style={{ width: '60px', height: '60px', fontSize: '1.5rem', borderRadius: '12px' }}
+                                            onClick={() => setActiveAction(prev => ({ ...prev, d1: val }))}
+                                        >
+                                            {val}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                            
+                            <div>
+                                <p style={{ fontWeight: 'bold', marginBottom: '10px' }}>Dado 2:</p>
+                                <div style={{ display: 'flex', justifyContent: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                                    {[1, 2, 3, 4, 5, 6].map(val => (
+                                        <button 
+                                            key={val} 
+                                            className={`magical-btn ${activeAction.d2 === val ? 'primary-btn' : ''}`}
+                                            style={{ width: '60px', height: '60px', fontSize: '1.5rem', borderRadius: '12px' }}
+                                            onClick={() => setActiveAction(prev => ({ ...prev, d2: val }))}
+                                        >
+                                            {val}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="modal-actions">
+                            <button 
+                                className="primary-btn magical-btn" 
+                                disabled={!activeAction.d1 || !activeAction.d2}
+                                onClick={() => setPhysicalDice(activeAction.d1, activeAction.d2)}
+                                style={{ padding: '15px 40px', fontSize: '1.2rem' }}
+                            >
+                                Confirmar e Mover
+                            </button>
+                            <button className="cancel-btn magical-btn" onClick={() => { setActiveAction(null); syncState({ active_action: null }); }}>Cancelar</button>
+                        </div>
+                     </div>
+                  )}
                   {activeAction.type === 'jail_options' && (
                      <>
                         <div style={{display: 'flex', justifyContent: 'center', marginBottom: '1rem'}}>
