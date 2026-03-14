@@ -44,18 +44,17 @@ const DiceRolling = ({ onFinish, diceValues, isWaiting }) => {
     return () => clearInterval(interval);
   }, [isWaiting]);
 
-  const displayValues = isWaiting ? diceValues : randomValues;
+  const displayValue = isWaiting ? diceValues[0] : randomValues[0];
 
   return (
     <motion.div 
       initial={{ scale: 0.5, rotate: 0 }}
       animate={{ scale: isWaiting ? 1.5 : [1, 1.2, 1.1, 1], rotate: isWaiting ? 1080 : [0, 720, 1440, 2160] }}
       transition={{ duration: isWaiting ? 0.3 : 2.5, ease: "easeInOut" }}
-      onAnimationComplete={() => !isWaiting && onFinish()}
+      onAnimationComplete={() => !isRolling && onFinish()}
       className="dice-container"
     >
-      <div className="dice" style={{boxShadow: '0 15px 35px rgba(0,0,0,0.5)', borderRadius: '20px', border: '4px solid var(--accent)'}}>{displayValues[0]}</div>
-      <div className="dice" style={{boxShadow: '0 15px 35px rgba(0,0,0,0.5)', borderRadius: '20px', border: '4px solid var(--accent)'}}>{displayValues[1]}</div>
+      <div className="dice" style={{boxShadow: '0 15px 35px rgba(0,0,0,0.5)', borderRadius: '20px', border: '4px solid var(--accent)'}}>{displayValue}</div>
     </motion.div>
   );
 };
@@ -173,26 +172,18 @@ export default function GameScreen({ players, startingPlayerIndex, initialGameSt
     }
   }, [activeAction]);
 
-  const rollDice = () => {
-    const cp = gameState.players[gameState.currentPlayerIndex];
-    if (cp.inJail && !activeAction) {
-      setActiveAction({ type: 'jail_options' });
-      syncState({ active_action: { type: 'jail_options' } });
-      return;
-    }
-
-    // Instead of auto-rolling, ask for physical dice input
-    setActiveAction({ type: 'input_dice', d1: null, d2: null });
-    syncState({ active_action: { type: 'input_dice', d1: null, d2: null } });
+    // Instead of auto-rolling, ask for physical dice input (SINGLE DIE)
+    setActiveAction({ type: 'input_dice', val: null });
+    syncState({ active_action: { type: 'input_dice', val: null } });
   };
 
-  const setPhysicalDice = (d1, d2) => {
-    const _dv = [d1, d2];
+  const setPhysicalDice = (val) => {
+    const _dv = [val, 0]; // Using index 0 for the single die value
     setDiceValues(_dv);
     setIsRolling(true);
     setIsWaitingDice(false);
     setIsInitiator(true);
-    speak(`${d1} e ${d2}. Somando ${d1 + d2}.`, true);
+    speak(`Caiu ${val}.`, true);
     
     syncState({ dice_values: _dv, is_rolling: true, active_action: null, game_state: gameState });
   };
@@ -215,7 +206,7 @@ export default function GameScreen({ players, startingPlayerIndex, initialGameSt
         setIsWaitingDice(false);
         
         // Locked-in values for this movement
-        const moveDiceSum = diceValues[0] + diceValues[1];
+        const moveDiceSum = diceValues[0]; // Single die sum
         const cpIndex = gameState.currentPlayerIndex;
         // Get actual latest position from current state just before walk
         let currentPos = gameState.players[cpIndex].position;
@@ -226,40 +217,17 @@ export default function GameScreen({ players, startingPlayerIndex, initialGameSt
         // Jail mechanics BEFORE walking
         if (gameState.players[cpIndex].inJail) {
           const cp = { ...gameState.players[cpIndex] };
-          if (diceValues[0] === diceValues[1]) {
-            speak("Dados iguais! Você saiu da detenção e agora vai se mover.");
-            cp.inJail = false; 
-            cp.jailTurns = 0;
-            // Update state with jail-free player before walking
-            const intermediatePlayers = [...gameState.players];
-            intermediatePlayers[cpIndex] = cp;
-            const intermediateState = { ...gameState, players: intermediatePlayers };
-            setGameState(intermediateState);
-            syncState({ game_state: intermediateState });
-          } else {
-            cp.jailTurns += 1;
-            if (cp.jailTurns >= 3) {
-               cp.inJail = false; 
-               cp.jailTurns = 0; 
-               cp.money -= 50; 
-               speak("Pagou 50 reais de fiança e saiu da detenção. Agora pode se mover.");
-               const intermediatePlayers = [...gameState.players];
-               intermediatePlayers[cpIndex] = cp;
-               const intermediateState = { ...gameState, players: intermediatePlayers };
-               setGameState(intermediateState);
-               syncState({ game_state: intermediateState });
-            } else {
-               speak("Você continua na detenção. Passe a vez.");
-               const newPlayers = [...gameState.players];
-               newPlayers[cpIndex] = cp;
-               const finalState = { ...gameState, players: newPlayers, currentPlayerIndex: (cpIndex + 1) % newPlayers.length };
-               setGameState(finalState);
-               setDiceValues(null);
-               setIsInitiator(false);
-               syncState({ game_state: finalState, is_rolling: false, active_action: null, dice_values: null });
-               return;
-            }
-          }
+          // If using only 1 die, we exit jail automatically after 1 turn or bail
+          // No "doubles" check possible with one die
+          cp.inJail = false; 
+          cp.jailTurns = 0;
+          speak("Saindo da detenção.");
+          
+          const intermediatePlayers = [...gameState.players];
+          intermediatePlayers[cpIndex] = cp;
+          const intermediateState = { ...gameState, players: intermediatePlayers };
+          setGameState(intermediateState);
+          syncState({ game_state: intermediateState });
         }
         
         const moveOneStep = (stepCount) => {
@@ -414,15 +382,15 @@ export default function GameScreen({ players, startingPlayerIndex, initialGameSt
        if (card.type === 'move_back') {
            currentPlayer.position = (currentPlayer.position - card.spaces + BOARD_SPACES.length) % BOARD_SPACES.length;
        }
-    } else if (action.type === 'go_to_jail') {
-       playSound('bad'); currentPlayer.position = 9; currentPlayer.inJail = true;
-    } else if (action.type === 'jail_options') {
+     } else if (action.type === 'go_to_jail') {
+        playSound('bad'); currentPlayer.position = 9; currentPlayer.inJail = true;
+     } else if (action.type === 'jail_options') {
         if (decision === 'pay') {
             currentPlayer.money -= 50;
             currentPlayer.inJail = false;
             currentPlayer.jailTurns = 0;
             playSound('money');
-            speak("Fiança paga! Agora jogue os dados para se mover.");
+            speak("Fiança paga! Agora informe o dado para se mover.");
             
             const nextState = {...gameState, players: newPlayers};
             setGameState(nextState);
@@ -434,18 +402,10 @@ export default function GameScreen({ players, startingPlayerIndex, initialGameSt
             // Decision 'roll'
             setActiveAction(null);
             syncState({ active_action: null });
-            // Small delay before rolling to let modal close
+            // Small delay before opening input
             setTimeout(() => {
-                // Modified rollDice logic to bypass jail check once
-                playSound('dice');
-                const d1 = Math.floor(Math.random() * 6) + 1;
-                const d2 = Math.floor(Math.random() * 6) + 1;
-                const _dv = [d1, d2];
-                setDiceValues(_dv);
-                setIsRolling(true);
-                setIsWaitingDice(false);
-                setIsInitiator(true);
-                syncState({ dice_values: _dv, is_rolling: true, active_action: null, game_state: gameState });
+                setActiveAction({ type: 'input_dice', val: null });
+                syncState({ active_action: { type: 'input_dice', val: null } });
             }, 500);
             return;
         }
@@ -660,49 +620,28 @@ export default function GameScreen({ players, startingPlayerIndex, initialGameSt
                  )}
                   {activeAction.type === 'input_dice' && (
                      <div style={{ textAlign: 'center' }}>
-                        <h3>Resultado dos Dados Físicos</h3>
-                        <p>Selecione os valores que caíram nos dados:</p>
+                        <h3>Resultado do Dado Físico</h3>
+                        <p>Selecione o valor que caiu no dado:</p>
                         
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', margin: '2rem 0' }}>
-                            <div>
-                                <p style={{ fontWeight: 'bold', marginBottom: '10px' }}>Dado 1:</p>
-                                <div style={{ display: 'flex', justifyContent: 'center', gap: '10px', flexWrap: 'wrap' }}>
-                                    {[1, 2, 3, 4, 5, 6].map(val => (
-                                        <button 
-                                            key={val} 
-                                            className={`magical-btn ${activeAction.d1 === val ? 'primary-btn' : ''}`}
-                                            style={{ width: '60px', height: '60px', fontSize: '1.5rem', borderRadius: '12px' }}
-                                            onClick={() => setActiveAction(prev => ({ ...prev, d1: val }))}
-                                        >
-                                            {val}
-                                        </button>
-                                    ))}
-                                </div>
-                            </div>
-                            
-                            <div>
-                                <p style={{ fontWeight: 'bold', marginBottom: '10px' }}>Dado 2:</p>
-                                <div style={{ display: 'flex', justifyContent: 'center', gap: '10px', flexWrap: 'wrap' }}>
-                                    {[1, 2, 3, 4, 5, 6].map(val => (
-                                        <button 
-                                            key={val} 
-                                            className={`magical-btn ${activeAction.d2 === val ? 'primary-btn' : ''}`}
-                                            style={{ width: '60px', height: '60px', fontSize: '1.5rem', borderRadius: '12px' }}
-                                            onClick={() => setActiveAction(prev => ({ ...prev, d2: val }))}
-                                        >
-                                            {val}
-                                        </button>
-                                    ))}
-                                </div>
-                            </div>
+                        <div style={{ display: 'flex', justifyContent: 'center', gap: '15px', flexWrap: 'wrap', margin: '2.5rem 0' }}>
+                            {[1, 2, 3, 4, 5, 6].map(val => (
+                                <button 
+                                    key={val} 
+                                    className={`magical-btn ${activeAction.val === val ? 'primary-btn' : ''}`}
+                                    style={{ width: '80px', height: '80px', fontSize: '2rem', borderRadius: '15px', fontWeight: 'bold' }}
+                                    onClick={() => setActiveAction(prev => ({ ...prev, val: val }))}
+                                >
+                                    {val}
+                                </button>
+                            ))}
                         </div>
 
                         <div className="modal-actions">
                             <button 
                                 className="primary-btn magical-btn" 
-                                disabled={!activeAction.d1 || !activeAction.d2}
-                                onClick={() => setPhysicalDice(activeAction.d1, activeAction.d2)}
-                                style={{ padding: '15px 40px', fontSize: '1.2rem' }}
+                                disabled={!activeAction.val}
+                                onClick={() => setPhysicalDice(activeAction.val)}
+                                style={{ padding: '15px 50px', fontSize: '1.4rem' }}
                             >
                                 Confirmar e Mover
                             </button>
@@ -718,10 +657,9 @@ export default function GameScreen({ players, startingPlayerIndex, initialGameSt
                         <h3>Detenção! 🚓</h3>
                         <p>Você está preso. O que deseja fazer?</p>
                         <div className="modal-actions" style={{flexDirection: 'column', gap: '1rem'}}>
-                            <button className="primary-btn magical-btn" style={{width: '100%'}} onClick={() => executeAction('roll')}>Tentar Dados Iguais (Grátis)</button>
+                            <button className="primary-btn magical-btn" style={{width: '100%'}} onClick={() => executeAction('roll')}>Informar Dado Único</button>
                             <button className="magical-btn" style={{width: '100%', background: '#e67e22'}} onClick={() => executeAction('pay')}>Pagar R$ 50 e Sair Agora</button>
                         </div>
-                        <p style={{marginTop: '1.5rem', fontSize: '0.9rem', opacity: 0.8}}>Tentativas: {currentPlayerObj.jailTurns}/3</p>
                      </>
                   )}
                   {activeAction.type === 'info' && (
