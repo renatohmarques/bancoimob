@@ -98,11 +98,13 @@ export default function GameScreen({ players, startingPlayerIndex, initialGameSt
      const channel = supabase.channel('public:games')
        .on('postgres_changes', { event: '*', schema: 'public', table: 'games', filter: 'id=eq.main' }, (payload) => {
           const newData = payload.new;
+          if (!newData) return;
+          
           if (newData.game_state) setGameState(newData.game_state);
-          // Only update these if present in payload to avoid nulling out locally
-          setActiveAction(newData.active_action);
-          setDiceValues(newData.dice_values);
-          setIsRolling(newData.is_rolling);
+          // Usar comparar antes de setar para evitar loops de animação
+          setActiveAction(prev => JSON.stringify(prev) !== JSON.stringify(newData.active_action) ? newData.active_action : prev);
+          setDiceValues(prev => JSON.stringify(prev) !== JSON.stringify(newData.dice_values) ? newData.dice_values : prev);
+          setIsRolling(prev => prev !== newData.is_rolling ? newData.is_rolling : prev);
        })
        .subscribe();
      return () => supabase.removeChannel(channel);
@@ -206,7 +208,9 @@ export default function GameScreen({ players, startingPlayerIndex, initialGameSt
     setTimeout(async () => {
         setIsRolling(false);
         setIsWaitingDice(false);
-        
+        // Sync the end of rolling immediately to prevent other devices from re-rolling
+        syncState({ is_rolling: false, dice_values: diceValues, active_action: null });
+
         const cpIndex = gameState.currentPlayerIndex;
         const cp = { ...gameState.players[cpIndex] };
         
@@ -268,7 +272,7 @@ export default function GameScreen({ players, startingPlayerIndex, initialGameSt
             }
 
             const newState = { ...prev, players: nextPlayers };
-            syncState({ game_state: newState });
+            syncState({ game_state: newState, is_rolling: false });
             return newState;
           });
 
