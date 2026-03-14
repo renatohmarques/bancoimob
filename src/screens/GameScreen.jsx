@@ -172,6 +172,14 @@ export default function GameScreen({ players, startingPlayerIndex, initialGameSt
     }
   }, [activeAction]);
 
+  const rollDice = () => {
+    const cp = gameState.players[gameState.currentPlayerIndex];
+    if (cp.inJail && !activeAction) {
+      setActiveAction({ type: 'jail_options' });
+      syncState({ active_action: { type: 'jail_options' } });
+      return;
+    }
+
     // Instead of auto-rolling, ask for physical dice input (SINGLE DIE)
     setActiveAction({ type: 'input_dice', val: null });
     syncState({ active_action: { type: 'input_dice', val: null } });
