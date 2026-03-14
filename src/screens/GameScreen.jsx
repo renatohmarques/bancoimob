@@ -185,8 +185,6 @@ export default function GameScreen({ players, startingPlayerIndex, initialGameSt
 
   const handleDiceFinish = () => {
     if (!isInitiator) {
-      // If NOT the initiator, just reset the rolling state when animation ends, 
-      // but don't calculate or sync anything. The initiator will sync the result.
       setIsRolling(false);
       setIsWaitingDice(false);
       return;
@@ -194,125 +192,152 @@ export default function GameScreen({ players, startingPlayerIndex, initialGameSt
 
     setIsWaitingDice(true);
     const sum = diceValues[0] + diceValues[1];
-    speak(`Caiu ${sum}. Avance ${sum} casas.`);
+    speak(`Caiu ${sum}.`, true);
     
-    // Esperar um pouco para os jogadores verem o resultado do dado
-    setTimeout(() => {
+    setTimeout(async () => {
         setIsRolling(false);
         setIsWaitingDice(false);
-        const sum = diceValues[0] + diceValues[1];
-        let cpIndex = gameState.currentPlayerIndex;
-        const cp = gameState.players[cpIndex];
-        let alertMsg = "";
         
-        // jail mechanics
+        const cpIndex = gameState.currentPlayerIndex;
+        const cp = { ...gameState.players[cpIndex] };
+        
+        // Jail mechanics BEFORE walking
         if (cp.inJail) {
           if (diceValues[0] === diceValues[1]) {
-            alertMsg = "Dados iguais! Você saiu da prisão.";
-            cp.inJail = false; cp.jailTurns = 0;
+            speak("Dados iguais! Você saiu da detenção e agora vai se mover.");
+            cp.inJail = false; 
+            cp.jailTurns = 0;
           } else {
             cp.jailTurns += 1;
             if (cp.jailTurns >= 3) {
-               cp.inJail = false; cp.jailTurns = 0; cp.money -= 50; 
-               alertMsg = "Pagou R$ 50 e saiu da prisão!";
+               cp.inJail = false; 
+               cp.jailTurns = 0; 
+               cp.money -= 50; 
+               speak("Pagou 50 reais de fiança e saiu da detenção. Agora pode se mover.");
             } else {
-               alert("Permanece na prisão.");
-               nextTurn();
-               // After nextTurn, the local state is updated. We need to sync this new state.
-               // We create a new game_state object to ensure all changes are captured.
-               const newPlayersForSync = [...gameState.players]; // cp was mutated, so copy it
-               const nextPlayerIndexForSync = (gameState.currentPlayerIndex + 1) % newPlayersForSync.length;
-               syncState({ 
-                 game_state: { 
-                   ...gameState, 
-                   players: newPlayersForSync,
-                   currentPlayerIndex: nextPlayerIndexForSync // Ensure next player is synced
-                 }, 
-                 is_rolling: false, 
-                 active_action: null,
-                 dice_values: null // Clear dice values for the next turn
-               });
+               speak("Você continua na detenção. Passe a vez.");
+               const newPlayers = [...gameState.players];
+               newPlayers[cpIndex] = cp;
+               const finalState = { ...gameState, players: newPlayers, currentPlayerIndex: (cpIndex + 1) % newPlayers.length };
+               setGameState(finalState);
+               setDiceValues(null);
+               setIsInitiator(false);
+               syncState({ game_state: finalState, is_rolling: false, active_action: null, dice_values: null });
                return;
             }
           }
         }
-
-        if(alertMsg) alert(alertMsg);
-
-        let newPosition = cp.position + sum;
-        let passedGo = false;
-        if (newPosition >= BOARD_SPACES.length) {
-          newPosition = newPosition % BOARD_SPACES.length;
-          passedGo = true;
-        }
-
-        const newPlayers = [...gameState.players];
-        const currentPlayer = newPlayers[cpIndex];
-        if (passedGo) { currentPlayer.money += 200; playSound('money'); }
-        currentPlayer.position = newPosition;
-
-        setGameState(prev => ({...prev, players: newPlayers}));
-        let _nextAction = null;
         
-        // Action logic
-        const space = BOARD_SPACES[newPosition];
-        if (space.type === 'property' || space.type === 'company') {
-          const owner = newPlayers.find(p => p.properties.includes(space.index));
-          if (!owner) {
-            setActiveAction({ type: 'buy_property', space: space });
-            _nextAction = { type: 'buy_property', space: space };
-          } else if (owner.id !== currentPlayer.id) {
-            let rent = 0;
-            if (space.type === 'company') {
-               rent = sum * space.prices.multiplier;
-            } else {
-               const level = owner.propertyLevels[space.index] || 0;
-               if (level === 0) rent = space.prices.rent;
-               else if (level === 1) rent = space.prices.casa;
-               else if (level === 2) rent = space.prices.hotel;
-               else rent = space.prices.shopping;
-            }
-            setActiveAction({ type: 'pay_rent', space: space, owner: owner, amount: rent });
-            _nextAction = { type: 'pay_rent', space: space, owner: owner, amount: rent };
-          } else if (space.type === 'property') {
-            const level = currentPlayer.propertyLevels[space.index] || 0;
-            if (level < 3) {
-                // Can build
-                setActiveAction({ type: 'build_property', space: space, currentLevel: level });
-                _nextAction = { type: 'build_property', space: space, currentLevel: level };
-            } else {
-                _nextAction = 'next_turn';
-            }
-          } else {
-            _nextAction = 'next_turn';
+        let currentStepsMove = 0;
+        const totalSteps = sum;
+        
+        // Função interna para mover um passo de cada vez
+        const moveOneStep = (stepCount) => {
+          if (stepCount >= totalSteps) {
+            // Chegou ao destino, processar ação final
+            finishMovement(sum);
+            return;
           }
-        } else if (space.type === 'chance') {
-           const card = CHANCE_CARDS[Math.floor(Math.random() * CHANCE_CARDS.length)];
-           setActiveAction({ type: 'chance', card: card });
-           _nextAction = { type: 'chance', card: card };
-        } else if (space.type === 'go_to_jail') {
-           setActiveAction({ type: 'go_to_jail' });
-           _nextAction = { type: 'go_to_jail' };
-        } else if (space.type === 'free_buy') {
-           setActiveAction({ type: 'free_buy' });
-           _nextAction = { type: 'free_buy' };
+
+          setGameState(prev => {
+            const nextPlayers = [...prev.players];
+            const cp = nextPlayers[prev.currentPlayerIndex];
+            const oldPos = cp.position;
+            const newPos = (oldPos + 1) % BOARD_SPACES.length;
+            
+            cp.position = newPos;
+            
+            // Narração do passo
+            const count = stepCount + 1;
+            speak(count.toString());
+            
+            // Se passar pelo início
+            if (newPos === 0) {
+              cp.money += 200;
+              playSound('money');
+              speak("Passou pelo Início, recebeu 200 reais!");
+            }
+
+            const newState = { ...prev, players: nextPlayers };
+            syncState({ game_state: newState });
+            return newState;
+          });
+
+          setTimeout(() => moveOneStep(stepCount + 1), 600);
+        };
+
+        moveOneStep(0);
+    }, 2000);
+  };
+
+  const finishMovement = (sum) => {
+    const cpIndex = gameState.currentPlayerIndex;
+    const currentPlayer = gameState.players[cpIndex];
+    const newPosition = currentPlayer.position;
+    const space = BOARD_SPACES[newPosition];
+    
+    speak(`Parou em ${space.title}.`);
+
+    let _nextAction = null;
+    const newPlayers = [...gameState.players];
+    const cp = newPlayers[cpIndex];
+
+    // Jail check at end of move
+    if (cp.inJail && diceValues[0] !== diceValues[1]) {
+        // This case should be handled before walking ideally, 
+        // but since we already walked, we just land and stay there.
+        // Actually Monopoly rules: if in jail and no doubles, don't move.
+        // I should have checked this BEFORE starting the walk.
+        // Let's assume for now the walk only happens if they are free or rolled doubles.
+    }
+
+    if (space.type === 'property' || space.type === 'company') {
+      const owner = newPlayers.find(p => p.properties.includes(space.index));
+      if (!owner) {
+        _nextAction = { type: 'buy_property', space: space };
+      } else if (owner.id !== cp.id) {
+        let rent = 0;
+        if (space.type === 'company') {
+           rent = sum * space.prices.multiplier;
         } else {
-           setActiveAction({ type: 'info', title: space.title, message: space.description || "Apenas uma casa comum.", space: space });
-           _nextAction = { type: 'info', title: space.title, message: space.description || "Apenas uma casa comum.", space: space };
+           const level = owner.propertyLevels[space.index] || 0;
+           if (level === 0) rent = space.prices.rent;
+           else if (level === 1) rent = space.prices.casa;
+           else if (level === 2) rent = space.prices.hotel;
+           else rent = space.prices.shopping;
         }
-        
-        let finalState = { ...gameState, players: newPlayers };
-        if (_nextAction === 'next_turn') {
-            finalState.currentPlayerIndex = (gameState.currentPlayerIndex + 1) % newPlayers.length;
-            setGameState(finalState);
-             setDiceValues(null);
-             setIsInitiator(false);
-             syncState({ game_state: finalState, is_rolling: false, active_action: null, dice_values: null });
-         } else {
-             setGameState(finalState);
-             syncState({ game_state: finalState, is_rolling: false, active_action: _nextAction });
-         }
-    }, 4000); // 4 segundos para a criançada ler e mexer a peça antes do modal
+        _nextAction = { type: 'pay_rent', space: space, owner: owner, amount: rent };
+      } else if (space.type === 'property') {
+        const level = cp.propertyLevels[space.index] || 0;
+        if (level < 3) {
+            _nextAction = { type: 'build_property', space: space, currentLevel: level };
+        } else {
+            _nextAction = 'next_turn';
+        }
+      } else {
+        _nextAction = 'next_turn';
+      }
+    } else if (space.type === 'chance') {
+       const card = CHANCE_CARDS[Math.floor(Math.random() * CHANCE_CARDS.length)];
+       _nextAction = { type: 'chance', card: card };
+    } else if (space.type === 'go_to_jail') {
+       _nextAction = { type: 'go_to_jail' };
+    } else if (space.type === 'free_buy') {
+       _nextAction = { type: 'free_buy' };
+    } else {
+       _nextAction = { type: 'info', title: space.title, message: space.description || "Apenas uma casa comum.", space: space };
+    }
+
+    if (_nextAction === 'next_turn') {
+      const finalState = { ...gameState, players: newPlayers, currentPlayerIndex: (cpIndex + 1) % newPlayers.length };
+      setGameState(finalState);
+      setDiceValues(null);
+      setIsInitiator(false);
+      syncState({ game_state: finalState, is_rolling: false, active_action: null, dice_values: null });
+    } else {
+      setActiveAction(_nextAction);
+      syncState({ game_state: { ...gameState, players: newPlayers }, is_rolling: false, active_action: _nextAction });
+    }
   };
 
   const executeAction = (decision) => {
@@ -358,7 +383,7 @@ export default function GameScreen({ players, startingPlayerIndex, initialGameSt
            currentPlayer.position = 9; currentPlayer.inJail = true;
        }
        if (card.type === 'move_back') {
-           currentPlayer.position = (currentPlayer.position - card.spaces + 35) % 35;
+           currentPlayer.position = (currentPlayer.position - card.spaces + BOARD_SPACES.length) % BOARD_SPACES.length;
        }
     } else if (action.type === 'go_to_jail') {
        playSound('bad'); currentPlayer.position = 9; currentPlayer.inJail = true;
